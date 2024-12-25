@@ -6,7 +6,7 @@ Rmq-worker subscribes to given queue and manages storage of relevant `event` ent
 Bet-maker service accepts requests on listing relevant `event` entries, listing and creating `bet` entries.
 
 ## How to use
-Build -> `docker compose up --build`
+Build -> ```docker compose up --build```
 
 Line-provider -> http://localhost:8080/docs
 

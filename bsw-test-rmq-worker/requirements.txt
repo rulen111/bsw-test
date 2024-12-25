@@ -1,0 +1,4 @@
+pydantic>=2.10.4
+aio-pika>=9.5.4
+aioredis>=2.0.1
+hiredis>=3.1.0

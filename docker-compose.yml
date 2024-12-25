@@ -1,0 +1,51 @@
+services:
+  line-provider:
+    build:
+      context: "./bsw-test-line-provider"
+    depends_on:
+      - rmq-worker
+    hostname: line-provider
+    restart: unless-stopped
+    ports:
+      - 8080:8080
+
+  rabbitmq:
+    image: rabbitmq:management-alpine
+    hostname: rabbitmq
+    restart: always
+    environment:
+      - RABBITMQ_DEFAULT_USER=rmuser
+      - RABBITMQ_DEFAULT_PASS=rmpassword
+      - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbit log_levels [{connection,error},{default,error}] disk_free_limit 2147483648
+    volumes:
+      - ./rabbitmq:/var/lib/rabbitmq
+    ports:
+      - 15672:15672
+      - 5672:5672
+
+  bet-maker:
+    build:
+      context: "./bsw-test-bet-maker"
+    depends_on:
+      - redis
+    hostname: bet-maker
+    restart: unless-stopped
+    ports:
+      - 8081:8081
+
+  rmq-worker:
+    build:
+      context: "./bsw-test-rmq-worker"
+    depends_on:
+      - rabbitmq
+      - redis
+    restart: always
+
+  redis:
+    image: redis:alpine
+    hostname: redis
+    restart: always
+    volumes:
+      - ./redis:/var/lib/redis
+    ports:
+      - 6379:6379

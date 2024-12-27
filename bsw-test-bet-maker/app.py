@@ -1,85 +1,82 @@
-import decimal
-import enum
+import logging
+import os
 import time
+from contextlib import asynccontextmanager
+from typing import Optional, Sequence, Type
 
-import aioredis
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, field_serializer
+import aiohttp
+from fastapi import FastAPI, HTTPException, Depends
+from sqlalchemy.future import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from db import init_db, get_session
+from common.models import Event, Bet
+import models
 
-REDIS_EVENTS_URL = "redis://redis"
-
-
-class BetStatus(enum.IntEnum):
-    NEW = 1
-    FINISHED_WIN = 2
-    FINISHED_LOSE = 3
-
-
-class Bet(BaseModel):
-    bet_id: str
-    event_id: str
-    amount: decimal.Decimal
-    status: BetStatus = BetStatus.NEW
-
-    @field_serializer("amount")
-    def serialize_amount(self, amount: decimal.Decimal, _info):
-        return str(amount)
+EVENTS_URL = os.getenv("EVENTS_URL", "http://line-provider:8080/events")
 
 
-app = FastAPI()
-r_client = aioredis.from_url(REDIS_EVENTS_URL)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/events")
-async def get_events():
-    async with r_client.client() as conn:
-        cur = b"0"
-        while cur:
-            cur, keys = await conn.scan(cur, match="event:*")
-        result = list()
-        for key in keys:
-            values = await conn.hgetall(key)
-            result.append(values)
-
-    return result
+async def get_events() -> list[Optional[Event]]:
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(EVENTS_URL) as resp:
+                return await resp.json()
+    except aiohttp.ClientError as e:
+        logging.warning(f"Line provider could not return valid response: {e}")
+        raise HTTPException(status_code=424, detail="Line provider not responding correctly")
 
 
 @app.post("/bets")
-async def make_bet(bet: Bet):
-    async with r_client.client() as conn:
-        key_event = f"event:{bet.event_id}"
-        event = await conn.hgetall(key_event)
-        if int(event[b"deadline"]) > int(time.time()):
-            key_bet = f"bet:{bet.bet_id}"
-            key_pair = f"event-bet:{bet.event_id}"
-            data = bet.model_dump()
-            async with conn.pipeline(transaction=True) as pipe:
-                await (pipe.hset(key_bet, mapping=data).sadd(key_pair, bet.bet_id).execute())
+async def make_bet(
+    bet: Bet,
+    db_session: AsyncSession = Depends(get_session),
+) -> Bet:
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(EVENTS_URL + f"/{bet.event_id}") as resp:
+                event = await resp.json()
 
-    return {}
+                deadline = event.get("deadline", None)
+                ex_value = deadline - int(time.time()) if deadline else None
+                if not ex_value or ex_value < 0:
+                    raise HTTPException(status_code=400, detail="Betting deadline is already reached")
+
+                db_session.add(bet)
+                await db_session.commit()
+                return bet
+
+    except aiohttp.ClientError as e:
+        logging.warning(f"Line provider could not return valid response: {e}")
+        raise HTTPException(status_code=424, detail="Line provider not responding correctly")
 
 
 @app.get("/bets")
-async def get_bets():
-    async with r_client.client() as conn:
-        cur = b"0"
-        while cur:
-            cur, keys = await conn.scan(cur, match="bet:*")
-        result = list()
-        for key in keys:
-            value = await conn.hgetall(key)
-            result.append(value)
+async def get_bets(
+    db_session: AsyncSession = Depends(get_session),
+) -> Sequence[Bet]:
+    stmt = select(models.Bet)
+    result = await db_session.execute(stmt)
 
-    return result
+    return result.scalars().all()
 
 
 @app.get("/bets/{bet_id}")
-async def get_bet(bet_id: str):
-    async with r_client.client() as conn:
-        key = f"bet:{bet_id}"
-        value = await conn.hgetall(key)
-        if value:
-            return value
-        else:
-            raise HTTPException(status_code=404, detail="Bet not found")
+async def get_bet(
+    bet_id: int,
+    db_session: AsyncSession = Depends(get_session),
+) -> Type[Bet]:
+    bet = await db_session.get(Bet, bet_id)
+    if not bet:
+        raise HTTPException(status_code=404, detail="Bet not found")
+
+    return bet

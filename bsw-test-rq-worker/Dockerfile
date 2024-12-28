@@ -1,6 +1,6 @@
-FROM python:3.10-alpine
+FROM common
 WORKDIR /
 COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
-COPY main.py main.py
+COPY *.py .
 CMD ["python", "-u", "main.py"]

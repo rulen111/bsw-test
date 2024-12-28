@@ -6,9 +6,8 @@ from typing import Optional
 import aiohttp
 import aioredis
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
-from db import get_session
 from common.models import EventState, Bet
 from common.rqueue import RedisQueue
 from redis_pool import pool
@@ -23,21 +22,17 @@ def get_redis() -> aioredis.Redis:
 
 async def start_consuming(rqueu: RedisQueue, input_queue: asyncio.Queue) -> None:
     while True:
-        try:
-            async with asyncio.timeout(1.):
-                msg = await rqueu.consume()
+        msg = await rqueu.consume()
 
-            if msg is None:
-                await asyncio.sleep(os.getenv("WORKER_CONSUME_TIMEOUT", 1.))
-                continue
-
-            await input_queue.put((msg, True))
-
-            if msg == os.getenv("WORKER_CONSUME_STOPWORD", "STOP_CONSUME"):
-                logging.warning(f"Consumer got stopword {msg}. Breaking the loop")
-                break
-        except asyncio.TimeoutError:
+        if msg is None:
+            await asyncio.sleep(float(os.getenv("WORKER_CONSUME_TIMEOUT", 1.)))
             continue
+
+        await input_queue.put((msg, True))
+
+        if msg == os.getenv("WORKER_CONSUME_STOPWORD", "STOP_CONSUME"):
+            logging.warning(f"Consumer got stopword {msg}. Breaking the loop")
+            break
 
 
 async def process_messages(input_queue: asyncio.Queue, output_queue: asyncio.Queue) -> None:
@@ -63,7 +58,7 @@ async def get_event_state(event_id: int) -> Optional[EventState]:
         async with aiohttp.ClientSession() as session:
             async with session.get(EVENTS_URL + f"/{event_id}") as resp:
                 event = await resp.json()
-                return event.get("state", None)
+                return event[0].get("state", None)
     except aiohttp.ClientError as e:
         logging.warning(f"Line provider could not return valid response to worker: {e}")
         return None
@@ -103,25 +98,28 @@ async def sync_states(input_queue: asyncio.Queue, db_session: AsyncSession) -> N
         for event_id in event_ids:
             await input_queue.put((event_id, False))
 
-        await asyncio.sleep(os.getenv("SYNC_EVENT_STATES_TIMEOUT", 300))
+        await asyncio.sleep(int(os.getenv("SYNC_EVENT_STATES_TIMEOUT", 300)))
 
 
 async def main() -> None:
     rqueue = RedisQueue(get_redis(), os.getenv("REDIS_QUEUE_EVENTS_POSTFIX", "events"))
-    db_session = get_session()
-    input_queue = asyncio.Queue()
-    output_queue = asyncio.Queue()
 
-    tasks = []
-    for _ in range(os.getenv("RQWORKER_NUM_WORKERS", 1)):
-        tasks += [
-            asyncio.create_task(start_consuming(rqueue, input_queue)),
-            asyncio.create_task(process_messages(input_queue, output_queue)),
-            asyncio.create_task(update_bet(output_queue, db_session)),
-            asyncio.create_task(sync_states(input_queue, db_session))
-        ]
+    engine = create_async_engine(os.getenv("DB_URL"))
+    async_session = async_sessionmaker(engine, expire_on_commit=False)
+    async with async_session() as db_session:
+        input_queue = asyncio.Queue()
+        output_queue = asyncio.Queue()
 
-    await asyncio.gather(*tasks)
+        tasks = []
+        for _ in range(int(os.getenv("RQWORKER_NUM_WORKERS", 1))):
+            tasks += [
+                asyncio.create_task(start_consuming(rqueue, input_queue)),
+                asyncio.create_task(process_messages(input_queue, output_queue)),
+                asyncio.create_task(update_bet(output_queue, db_session)),
+                asyncio.create_task(sync_states(input_queue, db_session))
+            ]
+
+        await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

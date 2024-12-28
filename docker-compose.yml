@@ -3,49 +3,69 @@ services:
     build:
       context: "./bsw-test-line-provider"
     depends_on:
-      - rmq-worker
+      - redis
     hostname: line-provider
     restart: unless-stopped
     ports:
       - 8080:8080
-
-  rabbitmq:
-    image: rabbitmq:management-alpine
-    hostname: rabbitmq
-    restart: always
     environment:
-      - RABBITMQ_DEFAULT_USER=rmuser
-      - RABBITMQ_DEFAULT_PASS=rmpassword
-      - RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=-rabbit log_levels [{connection,error},{default,error}] disk_free_limit 2147483648
-    volumes:
-      - ./rabbitmq:/var/lib/rabbitmq
-    ports:
-      - 15672:15672
-      - 5672:5672
+      - REDIS_QUEUE_EVENTS_POSTFIX=events
+      - REDIS_QUEUE_URL=redis://redis
 
   bet-maker:
     build:
       context: "./bsw-test-bet-maker"
     depends_on:
-      - redis
+      - postgres
     hostname: bet-maker
     restart: unless-stopped
     ports:
       - 8081:8081
+    environment:
+      - DB_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/betmaker
+      - EVENTS_URL=http://line-provider:8080/events
 
-  rmq-worker:
+  rq-worker:
     build:
-      context: "bsw-test-rq-worker"
+      context: "./bsw-test-rq-worker"
     depends_on:
-      - rabbitmq
+      - postgres
       - redis
-    restart: always
+    restart: unless-stopped
+    environment:
+      - DB_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/betmaker
+      - EVENTS_URL=http://line-provider:8080/events
+      - REDIS_QUEUE_EVENTS_POSTFIX=events
+      - REDIS_QUEUE_URL=redis://redis
+      - SYNC_EVENT_STATES_TIMEOUT=300
+      - RQWORKER_NUM_WORKERS=1
 
   redis:
     image: redis:alpine
     hostname: redis
     restart: always
-    volumes:
-      - ./redis:/var/lib/redis
     ports:
       - 6379:6379
+    healthcheck:
+      test: redis-cli ping
+      interval: 3s
+      timeout: 5s
+      retries: 5
+      start_period: 3s
+
+  postgres:
+    image: postgres:alpine
+    hostname: postgres
+    restart: always
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_DB=betmaker
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    healthcheck:
+      test: pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB
+      interval: 3s
+      timeout: 5s
+      retries: 5
+      start_period: 3s

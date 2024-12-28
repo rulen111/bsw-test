@@ -45,12 +45,13 @@ async def make_bet(
             async with session.get(EVENTS_URL + f"/{bet.event_id}") as resp:
                 event = await resp.json()
 
-        deadline = event.get("deadline", None)
+        deadline = event[0].get("deadline", None)
         ex_value = deadline - int(time.time()) if deadline else None
         if not ex_value or ex_value < 0:
             raise HTTPException(status_code=400, detail="Betting deadline is already reached")
 
-        db_session.add(bet)
+        bet_orm = Bet(**bet.model_dump())
+        db_session.add(bet_orm)
         await db_session.commit()
         return bet
 

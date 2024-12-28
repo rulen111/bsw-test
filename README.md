@@ -17,3 +17,6 @@ docker compose up --build
 **Line-provider**: http://localhost:8080/docs
 
 **Bet-maker**: http://localhost:8081/docs
+
+---
+[bsw-test.drawio](img/bsw-test.drawio.png)

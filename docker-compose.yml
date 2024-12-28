@@ -35,7 +35,7 @@ services:
 
   rmq-worker:
     build:
-      context: "./bsw-test-rmq-worker"
+      context: "bsw-test-rq-worker"
     depends_on:
       - rabbitmq
       - redis

@@ -5,15 +5,15 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 import aioredis
 
-from common.models import Event, EventState
+from common.models import PydEvent, EventState
 from common.rqueue import RedisQueue
-from db import pool
+from redis_pool import pool
 
 
-events: dict[int, Event] = {
-    1: Event(event_id=1, coefficient=1.2, deadline=int(time.time()) + 600, state=EventState.NEW),
-    2: Event(event_id=2, coefficient=1.15, deadline=int(time.time()) + 60, state=EventState.NEW),
-    3: Event(event_id=2, coefficient=1.67, deadline=int(time.time()) + 90, state=EventState.NEW)
+events: dict[int, PydEvent] = {
+    1: PydEvent(event_id=1, coefficient=1.2, deadline=int(time.time()) + 600, state=EventState.NEW),
+    2: PydEvent(event_id=2, coefficient=1.15, deadline=int(time.time()) + 60, state=EventState.NEW),
+    3: PydEvent(event_id=2, coefficient=1.67, deadline=int(time.time()) + 90, state=EventState.NEW)
 }
 
 
@@ -30,7 +30,7 @@ async def send_msg(event_id: str) -> None:
 
 
 @app.put('/events')
-async def create_event(event: Event, background_tasks: BackgroundTasks) -> Event:
+async def create_event(event: PydEvent, background_tasks: BackgroundTasks) -> PydEvent:
     if event.state in (EventState.FINISHED_WIN, EventState.FINISHED_LOSE):
         background_tasks.add_task(send_msg, str(event.event_id))
 
@@ -45,16 +45,16 @@ async def create_event(event: Event, background_tasks: BackgroundTasks) -> Event
 
 
 @app.get('/events/{event_id}')
-async def get_event(event_id: int) -> Event:
+async def get_event(event_id: int) -> list[PydEvent]:
     if event_id in events:
-        return events[event_id]
+        return [events[event_id]]
 
     raise HTTPException(status_code=404, detail="Event not found")
 
 
 @app.get('/events/')
-async def get_events(archive: Optional[int] = None) -> list[Optional[Event]]:
-    if archive:
-        return list(e for e in events.values())
+async def get_events(finished: Optional[int] = None) -> list[Optional[PydEvent]]:
+    if finished:
+        return list(e for e in events.values() if e.state in (EventState.FINISHED_WIN, EventState.FINISHED_LOSE))
     else:
         return list(e for e in events.values() if time.time() < e.deadline)

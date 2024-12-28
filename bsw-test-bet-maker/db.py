@@ -3,7 +3,7 @@ import os
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.ext.asyncio.session import AsyncSession, async_sessionmaker
 
-import models
+import common.models as models
 
 engine = create_async_engine(os.getenv("DB_URL"))
 

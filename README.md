@@ -19,4 +19,4 @@ docker compose up --build
 **Bet-maker**: http://localhost:8081/docs
 
 ---
-[bsw-test.drawio](img/bsw-test.drawio.png)
+<img alt="bsw-test.drawio" src="img/bsw-test.drawio.png" title="bsw-test.drawio" height=400/>
